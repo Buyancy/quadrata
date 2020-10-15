@@ -31,10 +31,29 @@ mod tests {
         let (s, t, score) = needleman_wunsch(&a, &b, standard_cost_matrix(), linear_gap());
         assert_eq!((Sequence::from_nucleotides(vec!(T, T, T, C, C, C)), Sequence::from_nucleotides(vec!(Gap, Gap, Gap, C, C, C)), 0), (s, t, score));
     }
+
+    #[test]
+    fn test_align() {
+        let a = Sequence::from_nucleotides(vec!(A, C, T, A, C));
+        let b = Sequence::from_nucleotides(vec!(C, T, A, G));
+        let (s, t) = align(&a, &b, standard_cost_matrix(), linear_gap());
+        assert_eq!((Sequence::from_nucleotides(vec!(A, C, T, A, C)), Sequence::from_nucleotides(vec!(Gap, C, T, A, G))), (s, t));
+        
+        let a = Sequence::from_nucleotides(vec!(T, T, T, C, C, C));
+        let b = Sequence::from_nucleotides(vec!(C, C, C));
+        let (s, t) = align(&a, &b, standard_cost_matrix(), linear_gap());
+        assert_eq!((Sequence::from_nucleotides(vec!(T, T, T, C, C, C)), Sequence::from_nucleotides(vec!(Gap, Gap, Gap, C, C, C))), (s, t));
+
+        let a = Sequence::from_nucleotides(vec!(A, G, T, C, G, G, T, A, A, A));
+        let b = Sequence::from_nucleotides(vec!(T, A, G, G, G, A, A, A, T, T));
+        let (s, t, _) = needleman_wunsch(&a, &b, standard_cost_matrix(), linear_gap()); 
+        assert_eq!((s, t), align(&a, &b, standard_cost_matrix(), linear_gap()));
+     }
 }
 
 //We will represent a sequence of nucleotides as a vec of nucleotides. 
 pub mod sequences {
+    use std::rc::Rc; 
     use std::fmt;
     use std::cmp::{min, max, Ordering};
     use Nucleotide::*; 
@@ -94,6 +113,14 @@ pub mod sequences {
             Sequence { label:self.label.clone(), nucleotides:s } 
         }
 
+        //Concatinate two sequences and return the result. 
+        pub fn concat(&self, other : &Sequence) -> Sequence {
+            let mut s = self.nucleotides.clone(); 
+            let mut t = other.nucleotides.clone(); 
+            s.append(&mut t); 
+            Sequence::from_nucleotides(s.to_vec())
+        }
+
         //Create a blank nucleotide sequence. 
         pub fn new() -> Sequence {
             Sequence { label:String::from(""), nucleotides:vec!() }
@@ -106,7 +133,7 @@ pub mod sequences {
     }
 
     //Assumes that the sequences are the same length. 
-    pub fn score_alignments<M : Fn(Nucleotide, Nucleotide)-> i64, C : Fn(i64)->i64>(s : Sequence, t : Sequence, sub_matrix : M , cost_func : C ) -> i64 {
+    pub fn score_alignments<M : Fn(Nucleotide, Nucleotide)-> i64, C : Fn(i64)->i64>(s : Sequence, t : Sequence, sub_matrix : Rc<M> , cost_func : Rc<C> ) -> i64 {
         let mut score = 0; 
         let mut gap_len = 0; 
         for (a, b) in s.nucleotides.iter().zip(t.nucleotides.iter()){ 
@@ -122,18 +149,19 @@ pub mod sequences {
     }
 
     //Standard cost matrix. 1 for match -1 for mismatch. 
-    pub fn standard_cost_matrix() -> impl Fn(Nucleotide, Nucleotide) -> i64 {
-        | a : Nucleotide , b : Nucleotide | 
+    pub fn standard_cost_matrix() -> Rc<impl Fn(Nucleotide, Nucleotide) -> i64> {
+        let c = | a : Nucleotide , b : Nucleotide | 
         if a == b {
             1
         }else{
             -1 
-        }
+        }; 
+        Rc::new(c)
     }
 
     //Linear gap function. (-1 per gap.)
-    pub fn linear_gap() -> impl Fn(i64) -> i64 {
-        |_i| -1
+    pub fn linear_gap() -> Rc<impl Fn(i64) -> i64> {
+        Rc::new(|_i| -1)
     }
 
     //Print the alignment of two sequences. 
@@ -202,7 +230,7 @@ pub mod sequences {
         }
     }
 
-    pub fn needleman_wunsch<M : Fn(Nucleotide, Nucleotide)-> i64, C : Fn(i64)->i64>(a : &Sequence, b : &Sequence, sub_matrix : M, cost_func : C) -> (Sequence, Sequence, i64) {
+    pub fn needleman_wunsch<M : Fn(Nucleotide, Nucleotide)-> i64, C : Fn(i64)->i64>(a : &Sequence, b : &Sequence, sub_matrix : Rc<M>, cost_func : Rc<C>) -> (Sequence, Sequence, i64) {
         let mut s = vec!(Gap); 
         for i in &a.nucleotides {
             s.push(*i); 
@@ -225,8 +253,8 @@ pub mod sequences {
         for i in 1..s.len() {
             for j in 1..t.len() {
                 let a = NwCell{ score: x[i-1][j-1].score + sub_matrix(s[i], t[j]), gaps:(false, false) };
-                let b = NwCell{ score: x[i][j-1].score + cost_func(gap_length(&x, i, j, &sub_matrix, &cost_func, true)), gaps:(true, false) };
-                let c = NwCell{ score: x[i-1][j].score + cost_func(gap_length(&x, i, j, &sub_matrix, &cost_func, false)), gaps:(false, true) };
+                let b = NwCell{ score: x[i][j-1].score + cost_func(gap_length(&x, i, j, Rc::clone(&sub_matrix), Rc::clone(&cost_func), true)), gaps:(true, false) };
+                let c = NwCell{ score: x[i-1][j].score + cost_func(gap_length(&x, i, j, Rc::clone(&sub_matrix), Rc::clone(&cost_func), false)), gaps:(false, true) };
                 x[i][j] = max(a, max(b, c));
             }
         }
@@ -268,7 +296,7 @@ pub mod sequences {
     }
 
     //Helper function for determening the gap length in the dynamic programming matrix for needleman wunsch. 
-    fn gap_length<M : Fn(Nucleotide, Nucleotide)-> i64, C : Fn(i64)->i64>(x : &Vec<Vec<NwCell>>, i : usize, j : usize, _sub_matrix : &M, _cost_func : &C, s_or_t : bool) -> i64 {
+    fn gap_length<M : Fn(Nucleotide, Nucleotide)-> i64, C : Fn(i64)->i64>(x : &Vec<Vec<NwCell>>, i : usize, j : usize, _sub_matrix : Rc<M>, _cost_func : Rc<C>, s_or_t : bool) -> i64 {
         let mut gap_len = 1; 
         let mut i = i; 
         let mut j = j; 
@@ -294,5 +322,86 @@ pub mod sequences {
                 }
             }
         }
+    }
+
+    //Memoryless version of needleman wunsch for Hirschberg's algorithm to align sequences more efficiently. 
+    fn low_mem_nw<M : Fn(Nucleotide, Nucleotide)-> i64, C : Fn(i64)->i64>(a : &Sequence, b : &Sequence, sub_matrix : Rc<M>, cost_func : Rc<C>) -> Vec<i64> {
+        let s = &a.nucleotides; 
+        let t = &b.nucleotides; 
+
+        //The lines that will hold the scores. 
+        let mut v; 
+        let mut u = vec!(0 as i64; s.len()+1);
+        for i in 0..(s.len()+1) { u[i] = (i as i64) * -1 } 
+
+        //Iterate down the list and compute the scores. 
+        for i in 1..(t.len()+1){
+            //Ratchet. 
+            v = u.clone(); 
+            u = vec!(0 as i64; s.len()+1); 
+
+            //Iterate down the list and do needleman wunsch on the two lists. 
+            u[0] = ((i) as i64) * -1;
+            for j in 1..(s.len()+1) { 
+                let a = v[j-1] + sub_matrix(t[i-1], s[j-1]);
+                let b = v[j] + cost_func(1); //TODO: Support more gaps. 
+                let c = u[j-1] + cost_func(1); //TODO: Support more gaps.
+                u[j] = max(a, max(b, c)); 
+            }
+        }
+        //Return the last row of the matrix. 
+        u
+    }
+
+    //Use Hirschberg's algorithm to align two sequences. (More efficient than NW.)
+    pub fn align<M : Fn(Nucleotide, Nucleotide)-> i64, C : Fn(i64)->i64>(a : &Sequence, b : &Sequence, sub_matrix : Rc<M>, cost_func : Rc<C>) -> (Sequence, Sequence) {
+        //Get the sequences. 
+        let s = &a.nucleotides; 
+        let t = &b.nucleotides;
+
+        //Base cases. 
+        if s.len() == 0 {
+            let a = Sequence::from_nucleotides(vec!(Gap; t.len()));
+            let b = Sequence::from_nucleotides(t.to_vec()); 
+            return (a, b);
+        }
+        if t.len() == 0 {
+            let a = Sequence::from_nucleotides(s.to_vec()); 
+            let b = Sequence::from_nucleotides(vec!(Gap; s.len()));
+            return (a, b);
+        }
+        if t.len() == 1 || s.len() == 1 {
+            let (a, b, _) = needleman_wunsch(a, b, sub_matrix, cost_func); 
+            return (a, b);
+        }
+
+        //Split S. 
+        let s_split : usize = s.len()/2; 
+        let sl = s[..s_split].to_vec(); 
+        let mut sr = s[s_split..].to_vec(); 
+
+        //Figure out where to split t. 
+        let mut t_prime = t.clone(); 
+        t_prime.reverse(); 
+        sr.reverse(); 
+        let n1 = low_mem_nw(&b, &Sequence::from_nucleotides(sl.clone()), Rc::clone(&sub_matrix), Rc::clone(&cost_func));
+        let mut n2 = low_mem_nw(&Sequence::from_nucleotides(t_prime), &Sequence::from_nucleotides(sr.clone()), Rc::clone(&sub_matrix), Rc::clone(&cost_func));
+        sr.reverse(); 
+        n2.reverse(); 
+        //Find best split for t.
+        let pairs = n1.iter().zip(n2.iter()).map(|(a,b)| a+b).enumerate();
+        let t_split = match pairs.max_by_key(|(_i,v)| *v) {
+            Some((i, _v)) => i, 
+            None => 0
+        };
+        
+        let tl = t[..t_split].to_vec(); 
+        let tr = t[t_split..].to_vec(); 
+
+        //Recursive call.
+        let (xl, zl) = align(&Sequence::from_nucleotides(sl), &Sequence::from_nucleotides(tl), Rc::clone(&sub_matrix), Rc::clone(&cost_func));
+        let (xr, zr) = align(&Sequence::from_nucleotides(sr), &Sequence::from_nucleotides(tr), Rc::clone(&sub_matrix), Rc::clone(&cost_func));
+
+        return (xl.concat(&xr), zl.concat(&zr));
     }
 }
