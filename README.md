@@ -1,5 +1,5 @@
 # quadrata
-Quadrata is a bioinformatics library designed for use in the rust programming language. My plan is for it to handle sequences of nucleotides (or peptides in the fucure) and be able to do operations on them such as align or score them.  
+Quadrata is a bioinformatics sequence alignment library designed for use in the rust programming language. My plan is for it to handle sequences of nucleotides (or peptides in the fucure) and be able to do operations on them such as align or score them.  
 
 # Installation 
 The library can be downloaded from this repo. It is not currently on crates.io but I plan to put it there once it gets a bit more functionality. 
